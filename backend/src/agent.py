@@ -1,20 +1,17 @@
 # ======================================================
-# 🧠 DAY 4: TEACH-THE-TUTOR (BIOLOGY EDITION)
-# 🚀 Features: DNA, Cells, Nucleus & Active Recall
+# 💼 DAY 5: AI SALES DEVELOPMENT REP (SDR)
+# 🎯 COMPANY: LeadZen AI - B2B AI Sales Agent
+# 🚀 FEATURES: FAQ Retrieval, Lead Qualification, JSON Database
 # ======================================================
 
 import logging
 import json
 import os
-import asyncio
-from typing import Annotated, Literal, Optional
-from dataclasses import dataclass
+from datetime import datetime
+from typing import Annotated, Optional
+from dataclasses import dataclass, asdict
 
-print("\n" + "🧬" * 50)
-print("🚀 BIOLOGY TUTOR - DAY 4 TUTORIAL")
-print("💡 agent.py LOADED SUCCESSFULLY!")
-print("🧬" * 50 + "\n")
-
+# --- LiveKit Imports ---
 from dotenv import load_dotenv
 from pydantic import Field
 from livekit.agents import (
@@ -28,8 +25,6 @@ from livekit.agents import (
     function_tool,
     RunContext,
 )
-
-# 🔌 PLUGINS
 from livekit.plugins import murf, silero, google, deepgram, noise_cancellation
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
@@ -37,211 +32,213 @@ logger = logging.getLogger("agent")
 load_dotenv(".env.local")
 
 # ======================================================
-# 📚 KNOWLEDGE BASE (BIOLOGY DATA)
+# 📂 1. KNOWLEDGE BASE (FAQ)
 # ======================================================
 
-# 🆕 Renamed file so it generates fresh data for you
-CONTENT_FILE = "biology_content.json" 
+FAQ_FILE = "leadzen_faq.json"
+LEADS_FILE = "leadzen_leads_db.json"
 
-# 🧬 NEW BIOLOGY QUESTIONS
-DEFAULT_CONTENT = [
+# Default FAQ data for "LeadZen AI"
+DEFAULT_FAQ = [
     {
-        "id": "dna",
-        "title": "DNA",
-        "summary": "DNA (Deoxyribonucleic acid) is the molecule that carries genetic instructions for the development and functioning of all known living organisms. It is shaped like a double helix.",
-        "sample_question": "What is the full form of DNA and what is its structure called?"
+        "question": "What does LeadZen AI actually do?",
+        "answer": "LeadZen AI is an autonomous AI Sales Agent platform. It uses predictive analytics to find high-intent prospects, performs hyper-personalized multi-channel outreach (email, LinkedIn, voice), qualifies the leads, and only hands off warm, sales-qualified leads (SQLs) to your human team."
     },
     {
-        "id": "cell",
-        "title": "The Cell",
-        "summary": "The cell is the basic structural, functional, and biological unit of all known organisms. It is often called the 'building block of life'. Organisms can be single-celled or multicellular.",
-        "sample_question": "What is the main difference between a Prokaryotic cell and a Eukaryotic cell?"
+        "question": "Who is the ideal customer for LeadZen AI?",
+        "answer": "Our platform is best suited for B2B SaaS, E-commerce, and high-growth technology startups that have a clear Ideal Customer Profile (ICP) and are looking to automate their top-of-funnel sales process to scale quickly."
     },
     {
-        "id": "nucleus",
-        "title": "Nucleus",
-        "summary": "The nucleus is a membrane-bound organelle found in eukaryotic cells. It contains the cell's chromosomes (DNA) and controls the cell's growth and reproduction.",
-        "sample_question": "Why is the nucleus often referred to as the 'brain' or 'control center' of the cell?"
+        "question": "What is LeadZen AI's pricing model?",
+        "answer": "Our primary model is based on **pay-per-qualified-lead**, meaning you only pay for the sales-qualified opportunities we deliver, minimizing upfront risk. We have a Starter plan and a Growth plan. Specific monthly costs are customized based on lead targets."
     },
     {
-        "id": "cell_cycle",
-        "title": "Cell Cycle",
-        "summary": "The cell cycle is a series of events that takes place in a cell as it grows and divides. It consists of Interphase (growth) and the Mitotic phase (division).",
-        "sample_question": "In which phase of the cell cycle does the cell spend the most time?"
+        "question": "Do you offer a free trial or a free tier?",
+        "answer": "We do not offer a perpetually free tier, but we offer a **14-day proof-of-concept (POC) pilot**. This allows you to test the quality of the leads we generate before committing to a long-term plan. This pilot is usually heavily discounted or free, depending on the scope of work."
+    },
+    {
+        "question": "How long does it take to get set up?",
+        "answer": "The initial setup and AI training phase typically takes **7 to 10 days**. This includes integrating with your CRM, defining your ICP, and training our AI agent on your product messaging."
     }
 ]
 
-def load_content():
-    """
-    📖 Checks if biology JSON exists. 
-    If NO: Generates it from DEFAULT_CONTENT.
-    If YES: Loads it.
-    """
+def load_knowledge_base():
+    """Generates FAQ file if missing, then loads it."""
     try:
-        path = os.path.join(os.path.dirname(__file__), CONTENT_FILE)
-        
-        # Check if file exists
+        path = os.path.join(os.path.dirname(__file__), FAQ_FILE)
         if not os.path.exists(path):
-            print(f"⚠️ {CONTENT_FILE} not found. Generating biology data...")
+            print(f"📄 Creating default FAQ file at: {path}")
             with open(path, "w", encoding='utf-8') as f:
-                json.dump(DEFAULT_CONTENT, f, indent=4)
-            print("✅ Biology content file created successfully.")
-            
-        # Read the file
+                json.dump(DEFAULT_FAQ, f, indent=4)
         with open(path, "r", encoding='utf-8') as f:
-            data = json.load(f)
-            return data
-            
+            # Return as a string for the LLM to use in the System Prompt
+            return json.dumps(json.load(f))
     except Exception as e:
-        print(f"⚠️ Error managing content file: {e}")
-        return []
+        print(f"⚠️ Error loading FAQ: {e}")
+        return ""
 
-# Load data immediately on startup
-COURSE_CONTENT = load_content()
+# Load the FAQ into a global variable for the agent's instructions
+STORE_FAQ_TEXT = load_knowledge_base()
 
 # ======================================================
-# 🧠 STATE MANAGEMENT
+# 💾 2. LEAD DATA STRUCTURE
 # ======================================================
 
 @dataclass
-class TutorState:
-    """🧠 Tracks the current learning context"""
-    current_topic_id: str | None = None
-    current_topic_data: dict | None = None
-    mode: Literal["learn", "quiz", "teach_back"] = "learn"
+class LeadProfile:
+    name: str | None = None
+    company: str | None = None
+    email: str | None = None
+    role: str | None = None
+    use_case: str | None = None
+    team_size: str | None = None
+    timeline: str | None = None
     
-    def set_topic(self, topic_id: str):
-        # Find topic in loaded content
-        topic = next((item for item in COURSE_CONTENT if item["id"] == topic_id), None)
-        if topic:
-            self.current_topic_id = topic_id
-            self.current_topic_data = topic
-            return True
-        return False
+    def to_summary(self):
+        return {
+            "name": self.name,
+            "company": self.company,
+            "role": self.role,
+            "use_case": self.use_case,
+            "timeline": self.timeline,
+        }
 
 @dataclass
 class Userdata:
-    tutor_state: TutorState
-    agent_session: Optional[AgentSession] = None 
+    lead_profile: LeadProfile
 
 # ======================================================
-# 🛠️ TUTOR TOOLS
+# 🛠️ 3. SDR TOOLS
 # ======================================================
 
 @function_tool
-async def select_topic(
-    ctx: RunContext[Userdata], 
-    topic_id: Annotated[str, Field(description="The ID of the topic to study (e.g., 'dna', 'cell', 'nucleus')")]
-) -> str:
-    """📚 Selects a topic to study from the available list."""
-    state = ctx.userdata.tutor_state
-    success = state.set_topic(topic_id.lower())
-    
-    if success:
-        return f"Topic set to {state.current_topic_data['title']}. Ask the user if they want to 'Learn', be 'Quizzed', or 'Teach it back'."
-    else:
-        available = ", ".join([t["id"] for t in COURSE_CONTENT])
-        return f"Topic not found. Available topics are: {available}"
-
-@function_tool
-async def set_learning_mode(
-    ctx: RunContext[Userdata], 
-    mode: Annotated[str, Field(description="The mode to switch to: 'learn', 'quiz', or 'teach_back'")]
-) -> str:
-    """🔄 Switches the interaction mode and updates the agent's voice/persona."""
-    
-    # 1. Update State
-    state = ctx.userdata.tutor_state
-    state.mode = mode.lower()
-    
-    # 2. Switch Voice based on Mode
-    agent_session = ctx.userdata.agent_session 
-    
-    if agent_session:
-        if state.mode == "learn":
-            # 👨‍🏫 MATTHEW: The Lecturer
-            agent_session.tts.update_options(voice="en-US-matthew", style="Promo")
-            instruction = f"Mode: LEARN. Explain: {state.current_topic_data['summary']}"
-            
-        elif state.mode == "quiz":
-            # 👩‍🏫 ALICIA: The Examiner
-            agent_session.tts.update_options(voice="en-US-alicia", style="Conversational")
-            instruction = f"Mode: QUIZ. Ask this question: {state.current_topic_data['sample_question']}"
-            
-        elif state.mode == "teach_back":
-            # 👨‍🎓 KEN: The Student/Coach
-            agent_session.tts.update_options(voice="en-US-ken", style="Promo")
-            instruction = "Mode: TEACH_BACK. Ask the user to explain the concept to you as if YOU are the beginner."
-        else:
-            return "Invalid mode."
-    else:
-        instruction = "Voice switch failed (Session not found)."
-
-    print(f"🔄 SWITCHING MODE -> {state.mode.upper()}")
-    return f"Switched to {state.mode} mode. {instruction}"
-
-@function_tool
-async def evaluate_teaching(
+async def update_lead_profile(
     ctx: RunContext[Userdata],
-    user_explanation: Annotated[str, Field(description="The explanation given by the user during teach-back")]
+    name: Annotated[Optional[str], Field(description="Customer's full name")] = None,
+    company: Annotated[Optional[str], Field(description="Customer's company name")] = None,
+    email: Annotated[Optional[str], Field(description="Customer's professional email address")] = None,
+    role: Annotated[Optional[str], Field(description="Customer's job title or role, e.g., Head of Sales")] = None,
+    use_case: Annotated[Optional[str], Field(description="What they want to achieve with LeadZen AI, e.g., 'Find SaaS leads'")] = None,
+    team_size: Annotated[Optional[str], Field(description="Number of people in their sales/SDR team")] = None,
+    timeline: Annotated[Optional[str], Field(description="When they want to start, e.g., 'Now', 'next quarter', 'exploring'")] = None,
 ) -> str:
-    """📝 call this when the user has finished explaining a concept in 'teach_back' mode."""
-    print(f"📝 EVALUATING EXPLANATION: {user_explanation}")
-    return "Analyze the user's explanation. Give them a score out of 10 on accuracy and clarity, and correct any mistakes."
+    """
+    ✍️ Captures lead details provided by the user during conversation.
+    Call this immediately when the user provides any of these pieces of information.
+    """
+    profile = ctx.userdata.lead_profile
+    
+    # Update only fields that are provided (not None)
+    if name: profile.name = name
+    if company: profile.company = company
+    if email: profile.email = email
+    if role: profile.role = role
+    if use_case: profile.use_case = use_case
+    if team_size: profile.team_size = team_size
+    if timeline: profile.timeline = timeline
+    
+    # Simple console log to track progress
+    print(f"📝 UPDATING LEAD: {profile.to_summary()}")
+    return "Lead profile updated in the system. Continue the conversation."
 
-# ======================================================
-# 🧠 AGENT DEFINITION
-# ======================================================
-
-class TutorAgent(Agent):
-    def __init__(self):
-        # Generate list of topics for the prompt
-        topic_list = ", ".join([f"{t['id']} ({t['title']})" for t in COURSE_CONTENT])
+@function_tool
+async def submit_lead_and_end(
+    ctx: RunContext[Userdata],
+) -> str:
+    """
+    💾 Saves the complete lead to the database and signals the end of the call.
+    Call this when the user says goodbye, 'that's all', or 'I'm done'.
+    """
+    profile = ctx.userdata.lead_profile
+    
+    # Save to JSON file (Append mode)
+    db_path = os.path.join(os.path.dirname(__file__), LEADS_FILE)
+    
+    entry = asdict(profile)
+    entry["timestamp"] = datetime.now().isoformat()
+    
+    # Read existing, append, write back (Simple JSON DB)
+    existing_data = []
+    if os.path.exists(db_path):
+        try:
+            with open(db_path, "r", encoding='utf-8') as f:
+                existing_data = json.load(f)
+        except: pass
+    
+    existing_data.append(entry)
+    
+    with open(db_path, "w", encoding='utf-8') as f:
+        json.dump(existing_data, f, indent=4)
         
+    print(f"✅ LEAD SAVED TO {LEADS_FILE}")
+    
+    # Generate the final verbal summary for the agent
+    name = profile.name or "there"
+    email = profile.email or "the email you provided"
+    use_case = profile.use_case or "your general inquiry"
+    
+    summary = (
+        f"Thank you, {name}! I've successfully logged your information regarding "
+        f"{use_case}. A specialist will review your details and email you at "
+        f"{email} shortly. Goodbye!"
+    )
+    
+    return summary
+
+# ======================================================
+# 🧠 4. AGENT DEFINITION
+# ======================================================
+
+class LeadZenSDRAgent(Agent):
+    def __init__(self):
         super().__init__(
             instructions=f"""
-            You are an Biology Tutor designed to help users master concepts like DNA and Cells.
+            You are 'Anjali', a friendly, professional, and highly efficient Sales Development Rep (SDR) for **LeadZen AI**.
+            Your goal is to qualify the user and answer their questions using the FAQ.
+
+            📘 **YOUR KNOWLEDGE BASE (FAQ):**
+            {STORE_FAQ_TEXT}
             
-            📚 **AVAILABLE TOPICS:** {topic_list}
-            
-            🔄 **YOU HAVE 3 MODES:**
-            1. **LEARN Mode (Voice: Matthew):** You explain the concept clearly using the summary data.
-            2. **QUIZ Mode (Voice: Alicia):** You ask the user a specific question to test knowledge.
-            3. **TEACH_BACK Mode (Voice: Ken):** YOU pretend to be a student. Ask the user to explain the concept to you.
+            🎯 **YOUR GOAL:**
+            1. **Qualify the Lead:** Naturally guide the conversation to collect Name, Company, Role, Email, Use Case, Team Size, and Timeline.
+            2. **Answer Questions:** Use the FAQ content ONLY to answer product, service, or pricing questions.
             
             ⚙️ **BEHAVIOR:**
-            - Start by asking what topic they want to study.
-            - Use the `select_topic` tool when the user names a topic (e.g., 'dna').
-            - Use the `set_learning_mode` tool immediately when the user asks to learn, take a quiz, or teach.
-            - In 'teach_back' mode, listen to their explanation and then use `evaluate_teaching` to give feedback.
+            - **Be Conversational:** Answer a user's question first, then use a polite transition to ask for the next piece of lead detail. Example: "Our pilot program is 14 days, which is great for testing lead quality. To send you the details, what's the best email for you?"
+            - **Capture Data:** Use `update_lead_profile` immediately when you hear any new piece of lead information.
+            - **Closing:** When the user indicates the call is over (e.g., "Thanks, that's all", "I'm done"), call `submit_lead_and_end`.
+
+            🚫 **RESTRICTIONS:**
+            - **Do NOT** make up prices or details not explicitly found in the FAQ. If you don't know the answer, say "I'll check with our product team and email you the specific detail."
             """,
-            tools=[select_topic, set_learning_mode, evaluate_teaching],
+            tools=[update_lead_profile, submit_lead_and_end],
         )
 
 # ======================================================
-# 🎬 ENTRYPOINT
+# 🎬 5. ENTRYPOINT
 # ======================================================
 
 def prewarm(proc: JobProcess):
+    """Pre-load models before the job starts."""
+    # Ensure VAD model is loaded only once
     proc.userdata["vad"] = silero.VAD.load()
 
 async def entrypoint(ctx: JobContext):
     ctx.log_context_fields = {"room": ctx.room.name}
 
-    print("\n" + "🧬" * 25)
-    print("🚀 STARTING BIOLOGY TUTOR SESSION")
-    print(f"📚 Loaded {len(COURSE_CONTENT)} topics from Knowledge Base")
+    print("\n" + "💼" * 25)
+    print(f"🚀 STARTING SDR SESSION for LeadZen AI in room: {ctx.room.name}")
     
-    # 1. Initialize State
-    userdata = Userdata(tutor_state=TutorState())
+    # 1. Initialize State (The lead profile for this session)
+    userdata = Userdata(lead_profile=LeadProfile())
 
-    # 2. Setup Agent
+    # 2. Setup Agent Pipeline
     session = AgentSession(
         stt=deepgram.STT(model="nova-3"),
         llm=google.LLM(model="gemini-2.5-flash"),
         tts=murf.TTS(
-            voice="en-US-matthew", 
-            style="Promo",      
+            voice="en-US-natalie", 
+            style="Promo",       
             text_pacing=True,
         ),
         turn_detection=MultilingualModel(),
@@ -249,14 +246,12 @@ async def entrypoint(ctx: JobContext):
         userdata=userdata,
     )
     
-    # 3. Store session in userdata for tools to access
-    userdata.agent_session = session
-    
-    # 4. Start
+    # 3. Start the Session
     await session.start(
-        agent=TutorAgent(),
+        agent=LeadZenSDRAgent(),
         room=ctx.room,
         room_input_options=RoomInputOptions(
+            # Optional: Enable Noise Cancellation for cleaner audio
             noise_cancellation=noise_cancellation.BVC()
         ),
     )
