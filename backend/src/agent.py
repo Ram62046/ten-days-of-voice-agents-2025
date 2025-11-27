@@ -1,19 +1,15 @@
+## 💻 Day 6: SBI Fraud Agent (Murf TTS Variant)
 # ======================================================
-# 🧠 DAY 4: TEACH-THE-TUTOR (BIOLOGY EDITION)
-# 🚀 Features: DNA, Cells, Nucleus & Active Recall
+# 🏦 DAY 6: BANK FRAUD ALERT AGENT (SQLite DB variant)
+# 🛡️ "State Bank of India (SBI)" - Fraud Detection & Resolution (USING MURF TTS)
 # ======================================================
 
 import logging
-import json
 import os
-import asyncio
-from typing import Annotated, Literal, Optional
+import sqlite3
+from datetime import datetime
+from typing import Annotated, Optional
 from dataclasses import dataclass
-
-print("\n" + "🧬" * 50)
-print("🚀 BIOLOGY TUTOR - DAY 4 TUTORIAL")
-print("💡 agent.py LOADED SUCCESSFULLY!")
-print("🧬" * 50 + "\n")
 
 from dotenv import load_dotenv
 from pydantic import Field
@@ -29,193 +25,244 @@ from livekit.agents import (
     RunContext,
 )
 
-# 🔌 PLUGINS
-from livekit.plugins import murf, silero, google, deepgram, noise_cancellation
+# Standard LiveKit plugins
+# AZURE removed; MURF added here.
+from livekit.plugins import silero, google, deepgram, noise_cancellation, murf
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
 logger = logging.getLogger("agent")
 load_dotenv(".env.local")
 
 # ======================================================
-# 📚 KNOWLEDGE BASE (BIOLOGY DATA)
+# 💾 1. DATABASE SETUP (SQLite)
 # ======================================================
 
-# 🆕 Renamed file so it generates fresh data for you
-CONTENT_FILE = "biology_content.json" 
-
-# 🧬 NEW BIOLOGY QUESTIONS
-DEFAULT_CONTENT = [
-    {
-        "id": "dna",
-        "title": "DNA",
-        "summary": "DNA (Deoxyribonucleic acid) is the molecule that carries genetic instructions for the development and functioning of all known living organisms. It is shaped like a double helix.",
-        "sample_question": "What is the full form of DNA and what is its structure called?"
-    },
-    {
-        "id": "cell",
-        "title": "The Cell",
-        "summary": "The cell is the basic structural, functional, and biological unit of all known organisms. It is often called the 'building block of life'. Organisms can be single-celled or multicellular.",
-        "sample_question": "What is the main difference between a Prokaryotic cell and a Eukaryotic cell?"
-    },
-    {
-        "id": "nucleus",
-        "title": "Nucleus",
-        "summary": "The nucleus is a membrane-bound organelle found in eukaryotic cells. It contains the cell's chromosomes (DNA) and controls the cell's growth and reproduction.",
-        "sample_question": "Why is the nucleus often referred to as the 'brain' or 'control center' of the cell?"
-    },
-    {
-        "id": "cell_cycle",
-        "title": "Cell Cycle",
-        "summary": "The cell cycle is a series of events that takes place in a cell as it grows and divides. It consists of Interphase (growth) and the Mitotic phase (division).",
-        "sample_question": "In which phase of the cell cycle does the cell spend the most time?"
-    }
-]
-
-def load_content():
-    """
-    📖 Checks if biology JSON exists. 
-    If NO: Generates it from DEFAULT_CONTENT.
-    If YES: Loads it.
-    """
-    try:
-        path = os.path.join(os.path.dirname(__file__), CONTENT_FILE)
-        
-        # Check if file exists
-        if not os.path.exists(path):
-            print(f"⚠️ {CONTENT_FILE} not found. Generating biology data...")
-            with open(path, "w", encoding='utf-8') as f:
-                json.dump(DEFAULT_CONTENT, f, indent=4)
-            print("✅ Biology content file created successfully.")
-            
-        # Read the file
-        with open(path, "r", encoding='utf-8') as f:
-            data = json.load(f)
-            return data
-            
-    except Exception as e:
-        print(f"⚠️ Error managing content file: {e}")
-        return []
-
-# Load data immediately on startup
-COURSE_CONTENT = load_content()
-
-# ======================================================
-# 🧠 STATE MANAGEMENT
-# ======================================================
+DB_FILE = "fraud_db.sqlite"
 
 @dataclass
-class TutorState:
-    """🧠 Tracks the current learning context"""
-    current_topic_id: str | None = None
-    current_topic_data: dict | None = None
-    mode: Literal["learn", "quiz", "teach_back"] = "learn"
-    
-    def set_topic(self, topic_id: str):
-        # Find topic in loaded content
-        topic = next((item for item in COURSE_CONTENT if item["id"] == topic_id), None)
-        if topic:
-            self.current_topic_id = topic_id
-            self.current_topic_data = topic
-            return True
-        return False
+class FraudCase:
+    userName: str
+    securityIdentifier: str
+    cardEnding: str
+    transactionName: str
+    transactionAmount: str
+    transactionTime: str
+    transactionSource: str
+    case_status: str = "pending_review"
+    notes: str = ""
+
+
+def get_db_path():
+    """Returns the absolute path to the SQLite database file."""
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), DB_FILE)
+
+
+def get_conn():
+    """Returns a new SQLite connection with row factory set to sqlite3.Row."""
+    path = get_db_path()
+    conn = sqlite3.connect(path, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def seed_database():
+    """Create SQLite DB and insert sample rows if empty."""
+    conn = get_conn()
+    cur = conn.cursor()
+
+    # Create table
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS fraud_cases (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            userName TEXT NOT NULL,
+            securityIdentifier TEXT,
+            cardEnding TEXT,
+            transactionName TEXT,
+            transactionAmount TEXT,
+            transactionTime TEXT,
+            transactionSource TEXT,
+            case_status TEXT DEFAULT 'pending_review',
+            notes TEXT DEFAULT '',
+            created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT DEFAULT (datetime('now'))
+        )
+        """
+    )
+
+    # Insert sample data if table is empty
+    cur.execute("SELECT COUNT(1) FROM fraud_cases")
+    if cur.fetchone()[0] == 0:
+        sample_data = [
+            # Case 1: John (to be confirmed safe)
+            (
+                "John", "12345", "4242",
+                "ABC Industry", "$450.00", "2:30 AM EST", "alibaba.com",
+                "pending_review", "Automated flag: High value e-commerce transaction."
+            ),
+            # Case 2: Sarah (to be confirmed fraud)
+            (
+                "Sarah", "99887", "1199",
+                "Unknown Crypto Exchange", "$2,100.00", "4:15 AM PST", "online_transfer",
+                "pending_review", "Automated flag: Unusual location/merchant type."
+            )
+        ]
+        cur.executemany(
+            """
+            INSERT INTO fraud_cases (
+                userName, securityIdentifier, cardEnding, transactionName,
+                transactionAmount, transactionTime, transactionSource, case_status, notes
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            sample_data,
+        )
+        conn.commit()
+        print(f"✅ SQLite DB seeded at {DB_FILE} with 2 fraud cases.")
+
+    conn.close()
+
+
+# Initialize DB on load
+seed_database()
+
+# ======================================================
+# 🧠 2. STATE MANAGEMENT
+# ======================================================
 
 @dataclass
 class Userdata:
-    tutor_state: TutorState
-    agent_session: Optional[AgentSession] = None 
+    active_case: Optional[FraudCase] = None
 
 # ======================================================
-# 🛠️ TUTOR TOOLS
+# 🛠️ 3. FRAUD AGENT TOOLS (SQLite-backed)
 # ======================================================
 
 @function_tool
-async def select_topic(
-    ctx: RunContext[Userdata], 
-    topic_id: Annotated[str, Field(description="The ID of the topic to study (e.g., 'dna', 'cell', 'nucleus')")]
-) -> str:
-    """📚 Selects a topic to study from the available list."""
-    state = ctx.userdata.tutor_state
-    success = state.set_topic(topic_id.lower())
-    
-    if success:
-        return f"Topic set to {state.current_topic_data['title']}. Ask the user if they want to 'Learn', be 'Quizzed', or 'Teach it back'."
-    else:
-        available = ", ".join([t["id"] for t in COURSE_CONTENT])
-        return f"Topic not found. Available topics are: {available}"
-
-@function_tool
-async def set_learning_mode(
-    ctx: RunContext[Userdata], 
-    mode: Annotated[str, Field(description="The mode to switch to: 'learn', 'quiz', or 'teach_back'")]
-) -> str:
-    """🔄 Switches the interaction mode and updates the agent's voice/persona."""
-    
-    # 1. Update State
-    state = ctx.userdata.tutor_state
-    state.mode = mode.lower()
-    
-    # 2. Switch Voice based on Mode
-    agent_session = ctx.userdata.agent_session 
-    
-    if agent_session:
-        if state.mode == "learn":
-            # 👨‍🏫 MATTHEW: The Lecturer
-            agent_session.tts.update_options(voice="en-US-matthew", style="Promo")
-            instruction = f"Mode: LEARN. Explain: {state.current_topic_data['summary']}"
-            
-        elif state.mode == "quiz":
-            # 👩‍🏫 ALICIA: The Examiner
-            agent_session.tts.update_options(voice="en-US-alicia", style="Conversational")
-            instruction = f"Mode: QUIZ. Ask this question: {state.current_topic_data['sample_question']}"
-            
-        elif state.mode == "teach_back":
-            # 👨‍🎓 KEN: The Student/Coach
-            agent_session.tts.update_options(voice="en-US-ken", style="Promo")
-            instruction = "Mode: TEACH_BACK. Ask the user to explain the concept to you as if YOU are the beginner."
-        else:
-            return "Invalid mode."
-    else:
-        instruction = "Voice switch failed (Session not found)."
-
-    print(f"🔄 SWITCHING MODE -> {state.mode.upper()}")
-    return f"Switched to {state.mode} mode. {instruction}"
-
-@function_tool
-async def evaluate_teaching(
+async def lookup_customer(
     ctx: RunContext[Userdata],
-    user_explanation: Annotated[str, Field(description="The explanation given by the user during teach-back")]
+    name: Annotated[str, Field(description="The first or last name the user provides")],
 ) -> str:
-    """📝 call this when the user has finished explaining a concept in 'teach_back' mode."""
-    print(f"📝 EVALUATING EXPLANATION: {user_explanation}")
-    return "Analyze the user's explanation. Give them a score out of 10 on accuracy and clarity, and correct any mistakes."
+    """Lookup a customer's pending fraud case in SQLite DB by name."""
+    logger.info(f"🔎 LOOKING UP: {name}")
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
 
-# ======================================================
-# 🧠 AGENT DEFINITION
-# ======================================================
+        cur.execute(
+            "SELECT * FROM fraud_cases WHERE LOWER(userName) = LOWER(?) AND case_status = 'pending_review' LIMIT 1",
+            (name,),
+        )
+        row = cur.fetchone()
+        conn.close()
 
-class TutorAgent(Agent):
-    def __init__(self):
-        # Generate list of topics for the prompt
-        topic_list = ", ".join([f"{t['id']} ({t['title']})" for t in COURSE_CONTENT])
-        
-        super().__init__(
-            instructions=f"""
-            You are an Biology Tutor designed to help users master concepts like DNA and Cells.
-            
-            📚 **AVAILABLE TOPICS:** {topic_list}
-            
-            🔄 **YOU HAVE 3 MODES:**
-            1. **LEARN Mode (Voice: Matthew):** You explain the concept clearly using the summary data.
-            2. **QUIZ Mode (Voice: Alicia):** You ask the user a specific question to test knowledge.
-            3. **TEACH_BACK Mode (Voice: Ken):** YOU pretend to be a student. Ask the user to explain the concept to you.
-            
-            ⚙️ **BEHAVIOR:**
-            - Start by asking what topic they want to study.
-            - Use the `select_topic` tool when the user names a topic (e.g., 'dna').
-            - Use the `set_learning_mode` tool immediately when the user asks to learn, take a quiz, or teach.
-            - In 'teach_back' mode, listen to their explanation and then use `evaluate_teaching` to give feedback.
+        if not row:
+            return "User not found or case already resolved. Please ask the user to confirm the name."
+
+        record = dict(row)
+        # Store the case details in the session state
+        ctx.userdata.active_case = FraudCase(
+            userName=record["userName"],
+            securityIdentifier=record["securityIdentifier"],
+            cardEnding=record["cardEnding"],
+            transactionName=record["transactionName"],
+            transactionAmount=record["transactionAmount"],
+            transactionTime=record["transactionTime"],
+            transactionSource=record["transactionSource"],
+            case_status=record["case_status"],
+            notes=record["notes"],
+        )
+
+        return (
+            f"Record Found for {record['userName']}. Security ID needed for verification is {record['securityIdentifier']}. "
+            f"The suspicious transaction is {record['transactionAmount']} at {record['transactionName']}. "
+            f"You must now ask the user for their Security Identifier."
+        )
+
+    except Exception as e:
+        logger.error(f"Database lookup error: {str(e)}")
+        return f"Database error occurred during lookup."
+
+
+@function_tool
+async def resolve_fraud_case(
+    ctx: RunContext[Userdata],
+    status: Annotated[str, Field(description="confirmed_safe or confirmed_fraud")],
+    notes: Annotated[str, Field(description="A brief summary of the user's decision and the outcome.")],
+) -> str:
+    """Updates the status of the active fraud case in the SQLite database."""
+
+    if not ctx.userdata.active_case:
+        return "Error: No active fraud case selected. Cannot resolve."
+
+    case = ctx.userdata.active_case
+    case.case_status = status
+    case.notes = notes
+
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+
+        # Update the database record
+        cur.execute(
+            """
+            UPDATE fraud_cases
+            SET case_status = ?, notes = ?, updated_at = datetime('now')
+            WHERE userName = ?
             """,
-            tools=[select_topic, set_learning_mode, evaluate_teaching],
+            (case.case_status, case.notes, case.userName),
+        )
+        conn.commit()
+
+        # Retrieve the updated timestamp for confirmation
+        cur.execute("SELECT updated_at FROM fraud_cases WHERE userName = ?", (case.userName,))
+        updated_at = cur.fetchone()[0]
+        conn.close()
+
+        logger.info(f"✅ CASE UPDATED: {case.userName} -> {status} at {updated_at}")
+
+        # Provide a final confirmation message based on the outcome
+        if status == "confirmed_fraud":
+            return (
+                f"Fraud confirmed. I have immediately blocked your card ending {case.cardEnding} and a dispute has been opened. "
+                f"A replacement card will be issued to your address on file. Thank you for your cooperation."
+            )
+        elif status == "confirmed_safe":
+            return (
+                f"Transaction marked as safe. The temporary hold has been lifted on your card ending {case.cardEnding}. "
+                f"Thank you for helping us protect your account."
+            )
+        else:
+            return "Case status updated successfully."
+
+    except Exception as e:
+        logger.error(f"Error saving to DB: {e}")
+        return f"Error saving final status to the database: {e}"
+
+# ======================================================
+# 🤖 4. AGENT DEFINITION
+# ======================================================
+
+class FraudAgent(Agent):
+    def __init__(self):
+        super().__init__(
+            instructions="""
+            You are 'Ravi', a Fraud Detection Specialist at **State Bank of India (SBI)**.
+            Your goal is to quickly and professionally verify a suspicious transaction.
+
+            **Protocol Steps:**
+            1. **Greeting & Name:** Introduce yourself, state the purpose, and ask the customer for their **first name** to look up the case.
+            2. **Case Load:** Immediately call `lookup_customer(name)` with the user's name.
+            3. **Verification:** Ask the user to state their **Security Identifier** (e.g., "12345"). You must compare this to the 'Security ID (Expected)' value provided by the tool call result.
+                - **If correct:** Proceed.
+                - **If incorrect:** State politely, "I'm sorry, I cannot verify your identity with that information. I must end this call for security." and hang up.
+            4. **Transaction Details:** If verified, read out the full suspicious transaction details stored in the active case.
+            5. **Confirmation:** Ask: "Did you make this transaction?" (Yes/No).
+            6. **Resolution:**
+                - **User says YES:** Call `resolve_fraud_case(status='confirmed_safe', notes='Customer verified transaction.')`
+                - **User says NO:** Call `resolve_fraud_case(status='confirmed_fraud', notes='Customer denied transaction.')`
+            7. **Close:** Read the tool's final confirmation message and end the call professionally.
+            """,
+            tools=[lookup_customer, resolve_fraud_case],
         )
 
 # ======================================================
@@ -223,45 +270,37 @@ class TutorAgent(Agent):
 # ======================================================
 
 def prewarm(proc: JobProcess):
+    """Load VAD model during worker startup."""
     proc.userdata["vad"] = silero.VAD.load()
 
+
 async def entrypoint(ctx: JobContext):
-    ctx.log_context_fields = {"room": ctx.room.name}
+    """Main entrypoint for the agent session."""
+    logger.info("🚀 STARTING SBI FRAUD ALERT SESSION (SQLite)")
 
-    print("\n" + "🧬" * 25)
-    print("🚀 STARTING BIOLOGY TUTOR SESSION")
-    print(f"📚 Loaded {len(COURSE_CONTENT)} topics from Knowledge Base")
-    
-    # 1. Initialize State
-    userdata = Userdata(tutor_state=TutorState())
+    userdata = Userdata()
 
-    # 2. Setup Agent
     session = AgentSession(
         stt=deepgram.STT(model="nova-3"),
         llm=google.LLM(model="gemini-2.5-flash"),
         tts=murf.TTS(
-            voice="en-US-matthew", 
-            style="Promo",      
-            text_pacing=True,
-        ),
+            voice="en-US-marcus", 
+            style="Conversational", 
+            text_pacing=True
+        ), # TTS now uses Murf, requiring only MURF_API_KEY
         turn_detection=MultilingualModel(),
         vad=ctx.proc.userdata["vad"],
         userdata=userdata,
     )
-    
-    # 3. Store session in userdata for tools to access
-    userdata.agent_session = session
-    
-    # 4. Start
+
     await session.start(
-        agent=TutorAgent(),
+        agent=FraudAgent(),
         room=ctx.room,
-        room_input_options=RoomInputOptions(
-            noise_cancellation=noise_cancellation.BVC()
-        ),
+        room_input_options=RoomInputOptions(noise_cancellation=noise_cancellation.BVC()),
     )
 
     await ctx.connect()
+
 
 if __name__ == "__main__":
     cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint, prewarm_fnc=prewarm))
